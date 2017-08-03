@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/file_system/file_system.dart' hide File;
 import 'package:analyzer/file_system/physical_file_system.dart';
@@ -18,6 +19,7 @@ import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/source_io.dart';
 import 'package:path/path.dart' as p;
 
+import 'import_element_references_visitor.dart';
 import 'sdk_env.dart';
 import 'utils.dart';
 
@@ -92,7 +94,7 @@ class LibraryScanner {
 
     AnalysisEngine.instance.processRequiredPlugins();
 
-    var options = new AnalysisOptionsImpl()..analyzeFunctionBodies = false;
+    var options = new AnalysisOptionsImpl();
 
     var context = AnalysisEngine.instance.createAnalysisContext()
       ..analysisOptions = options
@@ -216,6 +218,7 @@ class LibraryScanner {
     var lib = _getLibraryElement(fullPath);
     if (lib == null) return [];
     var refs = new SplayTreeSet<String>();
+
     lib.importedLibraries.forEach((le) {
       refs.add(_normalizeLibRef(le.librarySource.uri, package, packageDir));
     });
@@ -223,6 +226,20 @@ class LibraryScanner {
       refs.add(_normalizeLibRef(le.librarySource.uri, package, packageDir));
     });
     refs.remove('dart:core');
+
+    print("LIB: ${lib.librarySource.uri}");
+    var items = searchLib(lib);
+    items.forEach((k, v) {
+      if (k.uri == 'dart:io') {
+        print('\t${k.uri ?? k.importedLibrary.librarySource.uri}');
+
+        for (var result in v) {
+          print(
+              "\t\t${result.span.text} @ ${result.span.start.line}x${result.span.start.column}");
+        }
+      }
+    });
+
     return new List<String>.unmodifiable(refs);
   }
 
@@ -232,6 +249,42 @@ class LibraryScanner {
       return _context.computeLibraryElement(source);
     }
     return null;
+  }
+
+  Map<ImportElement, List<SearchResult>> searchLib(LibraryElement lib) {
+    var results = <ImportElement, List<SearchResult>>{};
+
+    for (var importElement in lib.imports) {
+      var items = results[importElement] = <SearchResult>[];
+
+      var compUnit = _context.resolveCompilationUnit(lib.source, lib);
+      assert(compUnit != null);
+
+      items
+          .addAll(search(importElement, lib.definingCompilationUnit, compUnit));
+
+      for (var part in lib.parts) {
+        compUnit = _context.resolveCompilationUnit(part.source, lib);
+
+        items.addAll(search(importElement, part, compUnit));
+      }
+    }
+
+    return results;
+  }
+
+  List<SearchResult> search(
+      ImportElement element,
+      CompilationUnitElement enclosingUnitElement,
+      CompilationUnit libCompUnit) {
+    assert(enclosingUnitElement != null);
+
+    var visitor =
+        new ImportElementReferencesVisitor(element, enclosingUnitElement);
+
+    libCompUnit.accept(visitor);
+
+    return visitor.results;
   }
 }
 
