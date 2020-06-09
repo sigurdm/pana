@@ -8,82 +8,72 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:safe_url_check/safe_url_check.dart';
+import 'package:retry/retry.dart';
 
-import 'logging.dart';
 import 'utils.dart';
 
 final imageExtensions = <String>{'.gif', '.jpg', '.jpeg', '.png'};
 
-/// Returns a non-null Directory instance only if it is able to download and
-/// extract the direct package dependency. On any failure it clears the temp
-/// directory, otherwise it is the caller's responsibility to delete it.
-Future<Directory> downloadPackage(
+Future<T> withTempDir<T>(FutureOr<T> Function(Directory tempDir) fn) async {
+  final dir = Directory.systemTemp.createTempSync('pana-');
+  try {
+    return await fn(dir);
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+}
+
+/// Downloads the [package].[version] tar-ball and extracts it into [tempDir].
+///
+/// Throws an [Exception] if not successfull.
+Future<void> downloadPackage(
+  Directory tempDir,
   String package,
   String version, {
-  String pubHostedUrl,
+  String pubHostedUrl = 'https://pub.dev',
 }) async {
   // Find URI for the package tar-ball
-  final pubHostedUri = Uri.parse(pubHostedUrl ?? 'https://pub.dartlang.org');
+  final pubHostedUri = Uri.parse(pubHostedUrl);
   final packageUri = pubHostedUri.replace(
     path: '/packages/$package/versions/$version.tar.gz',
   );
+  // Download package
+  final tarballFile = p.join(tempDir.uri.toFilePath(), 'pkg.tar.gz');
+  await const RetryOptions().retry(() async =>
+      await File(tarballFile).writeAsBytes(await http.readBytes(packageUri)));
 
-  // Create a temporary directory for the tar-ball
-  final tmpTarDir = await Directory.systemTemp.createTemp('pana-');
-  var tmpPkgDir = await Directory.systemTemp.createTemp('pana-');
-  tmpPkgDir = Directory(await tmpPkgDir.resolveSymbolicLinks());
-  try {
-    // Download package
-    final tarballFile = p.join(tmpTarDir.uri.toFilePath(), 'pkg.tar.gz');
-    // TODO: Wrap this in retry-loop using package:retry
-    await File(tarballFile).writeAsBytes(await http.readBytes(packageUri));
-
-    // Extract downloaded package
-    final tar = await runProc('/bin/tar', [
-      '-xzf',
-      tarballFile,
-      '-C',
-      tmpPkgDir.path,
-    ]);
-    if (tar.exitCode != 0) {
-      log.warning(
-          'Tar extraction failed with exitcode=${tar.exitCode}: ${tar.stdout}');
-      return null;
-    }
-
-    // Delete all symlinks in the extracted folder
-    await Future.wait(
-      await tmpPkgDir
-          .list(recursive: true, followLinks: false)
-          .where((e) => e is Link)
-          .map((e) => e.delete())
-          .toList(),
-    );
-
-    // Removed all executable permissions from extracted files
-    final chmod = await runProc('/bin/chmod', [
-      '-R',
-      '-x+X',
-      tmpPkgDir.path,
-    ]);
-    if (chmod.exitCode != 0) {
-      log.severe('chmod of extract data failed');
-      return null;
-    }
-
-    // Return the tmpPkgDir
-    final retval = tmpPkgDir;
-    tmpPkgDir = null; // ensure this is null, so it's not deleted in final
-    return retval;
-  } catch (e, st) {
-    log.warning('Unable to download the archive of $package $version.', e, st);
-  } finally {
-    await Future.wait([
-      tmpTarDir.delete(recursive: true),
-      if (tmpPkgDir != null) tmpPkgDir.delete(recursive: true),
-    ]);
+  // Extract downloaded package
+  final tar = await runProc('/usr/bin/env', [
+    'tar',
+    '-xzf',
+    tarballFile,
+    '-C',
+    tempDir.path,
+  ]);
+  if (tar.exitCode != 0) {
+    throw Exception(
+        'Tar extraction failed with exitcode=${tar.exitCode}: ${tar.stdout}');
   }
-  return null;
+  File(tarballFile).deleteSync();
+
+  // Delete all symlinks in the extracted folder
+  await Future.wait(
+    await tempDir
+        .list(recursive: true, followLinks: false)
+        .where((e) => e is Link)
+        .map((e) => e.delete())
+        .toList(),
+  );
+
+  // Remove all executable permissions from extracted files
+  final chmod = await runProc('/bin/chmod', [
+    '-R',
+    '-x+X',
+    tempDir.path,
+  ]);
+  if (chmod.exitCode != 0) {
+    throw Exception('chmod of extract data failed');
+  }
 }
 
 /// Returns an URL that is likely the downloadable URL of the given path.

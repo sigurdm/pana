@@ -208,15 +208,6 @@ String prettyJson(obj) {
   }
 }
 
-/// If no `pubspec.yaml` file exists, `null` is returned.
-String getPubspecContent(String packagePath) {
-  var theFile = File(p.join(packagePath, 'pubspec.yaml'));
-  if (theFile.existsSync()) {
-    return theFile.readAsStringSync();
-  }
-  return null;
-}
-
 Object sortedJson(obj) {
   var fullJson = json.decode(json.encode(obj));
   return _toSortedMap(fullJson);

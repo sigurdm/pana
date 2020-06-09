@@ -284,6 +284,37 @@ Map<String, dynamic> _$PkgDependencyToJson(PkgDependency instance) {
   return val;
 }
 
+ReportSection _$ReportSectionFromJson(Map<String, dynamic> json) {
+  return ReportSection(
+    title: json['title'] as String,
+    grantedPoints: json['grantedPoints'] as int,
+    maxPoints: json['maxPoints'] as int,
+    summary: json['summary'] as String,
+  );
+}
+
+Map<String, dynamic> _$ReportSectionToJson(ReportSection instance) =>
+    <String, dynamic>{
+      'title': instance.title,
+      'grantedPoints': instance.grantedPoints,
+      'maxPoints': instance.maxPoints,
+      'summary': instance.summary,
+    };
+
+Report _$ReportFromJson(Map<String, dynamic> json) {
+  return Report(
+    sections: (json['sections'] as List)
+        ?.map((e) => e == null
+            ? null
+            : ReportSection.fromJson(e as Map<String, dynamic>))
+        ?.toList(),
+  );
+}
+
+Map<String, dynamic> _$ReportToJson(Report instance) => <String, dynamic>{
+      'sections': instance.sections,
+    };
+
 Health _$HealthFromJson(Map<String, dynamic> json) {
   return Health(
     analyzeProcessFailed: json['analyzeProcessFailed'] as bool,

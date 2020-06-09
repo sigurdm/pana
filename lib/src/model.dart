@@ -3,16 +3,20 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:json_annotation/json_annotation.dart';
 import 'package:meta/meta.dart';
+import 'package:pana/pana.dart';
 import 'package:pub_semver/pub_semver.dart';
 import 'package:quiver/core.dart' show hashObjects;
+import 'package:source_span/source_span.dart';
 
 import 'json_converters.dart';
 import 'platform.dart';
 import 'pubspec.dart';
+import 'render_markdown_terminal.dart';
 import 'utils.dart' show toRelativePath;
 
 part 'model.g.dart';
@@ -684,6 +688,58 @@ class PkgDependency implements Comparable<PkgDependency> {
 }
 
 @JsonSerializable()
+class ReportSection {
+  final String title;
+
+  /// How many points did this section score
+  final int grantedPoints;
+
+  /// How many points could this section have scored.
+  final int maxPoints;
+
+  /// Should describe the overall goals in a few lines, followed by
+  /// descriptions of each issue that resulted in [grantedPoints] being less
+  /// than  [maxPoints] (if any).
+  final String summary;
+  ReportSection({
+    @required this.title,
+    @required this.grantedPoints,
+    @required this.maxPoints,
+    @required this.summary,
+  });
+
+  static ReportSection fromJson(Map<String, dynamic> json) =>
+      _$ReportSectionFromJson(json);
+  Map<String, dynamic> toJson() => _$ReportSectionToJson(this);
+}
+
+@JsonSerializable()
+class Report {
+  /// The scoring sections
+  final List<ReportSection> sections;
+
+  Report({@required this.sections});
+
+  static Report fromJson(Map<String, dynamic> json) => _$ReportFromJson(json);
+  Map<String, dynamic> toJson() => _$ReportToJson(this);
+
+  String get formatForTerminal {
+    final buffer = StringBuffer();
+    for (final section in sections) {
+      final fullfilled = section.grantedPoints == section.maxPoints ? '✓' : '✗';
+      buffer.writeln(
+          '$fullfilled ${section.title} ${section.grantedPoints}/${section.maxPoints}');
+      buffer.writeln();
+      buffer.writeln(markdownInTerminal('${section.summary}',
+          indentation: 2,
+          lineWidth: stdout.hasTerminal ? stdout.terminalColumns : 80));
+      buffer.writeln();
+    }
+    return buffer.toString();
+  }
+}
+
+@JsonSerializable()
 class Health {
   /// Whether running `dartanalyzer` was successful.
   final bool analyzeProcessFailed;
@@ -915,6 +971,7 @@ class CodeProblem implements Comparable<CodeProblem> {
   final String file;
   final int line;
   final int col;
+  final int length;
   final String description;
 
   CodeProblem({
@@ -925,6 +982,7 @@ class CodeProblem implements Comparable<CodeProblem> {
     @required this.file,
     @required this.line,
     @required this.col,
+    @required this.length,
   });
 
   factory CodeProblem.fromJson(Map<String, dynamic> json) =>
@@ -1018,4 +1076,23 @@ class Stats {
   factory Stats.fromJson(Map<String, dynamic> json) => _$StatsFromJson(json);
 
   Map<String, dynamic> toJson() => _$StatsToJson(this);
+}
+
+class Issue {
+  final String description;
+  final SourceSpan span;
+  final String suggestion;
+
+  Issue(this.description, {this.span, this.suggestion});
+
+  @override
+  String toString() {
+    if (span != null) {
+      return '```\n${span.message(_message)}\n```';
+    }
+    return _message;
+  }
+
+  String get _message =>
+      suggestion == null ? description : '$description\n\n$suggestion';
 }

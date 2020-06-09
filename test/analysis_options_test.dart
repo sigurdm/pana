@@ -11,7 +11,7 @@ import 'package:pana/src/package_analyzer.dart' show InspectOptions;
 
 void main() {
   test('default pedantic options', () async {
-    final content = await getPedanticContent(inspectOptions: InspectOptions());
+    final content = await getPedanticContent();
     expect(content, contains('linter:'));
     expect(content, contains('rules:'));
     expect(content, contains('avoid_empty_else'));

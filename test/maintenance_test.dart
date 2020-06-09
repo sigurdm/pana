@@ -184,7 +184,7 @@ void main() {
         pkgResolution: PkgResolution([]),
       );
       expect(
-          maintenance.suggestions,
+          maintenance.suggestion,
           contains(predicate((Suggestion suggestion) =>
               suggestion.code ==
               SuggestionCode.pubspecUsesOldFlutterPluginFormat)));
@@ -212,7 +212,7 @@ void main() {
         pkgResolution: PkgResolution([]),
       );
       expect(
-          maintenance.suggestions.where((s) =>
+          maintenance.suggestion.where((s) =>
               s.code == SuggestionCode.pubspecUsesOldFlutterPluginFormat),
           isEmpty);
     });

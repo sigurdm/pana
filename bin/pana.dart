@@ -6,13 +6,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:args/args.dart';
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:logging/logging.dart' as log;
 import 'package:pana/pana.dart';
+import 'package:pana/src/download_utils.dart';
+import 'package:pana/src/create_report.dart';
 
 const defaultHostedUrl = 'https://pub.dev';
 
@@ -20,7 +21,7 @@ final _parser = ArgParser()
   ..addOption('flutter-sdk', help: 'The directory of the Flutter SDK.')
   ..addFlag('json',
       abbr: 'j',
-      help: 'Output log items as JSON.',
+      help: 'Output report as JSON.',
       defaultsTo: false,
       negatable: false)
   ..addOption('source',
@@ -37,7 +38,6 @@ final _parser = ArgParser()
       help: 'Configure the details in the output.',
       allowed: ['compact', 'normal', 'verbose'],
       defaultsTo: 'normal')
-  ..addFlag('scores', help: 'Include scores in the output JSON.')
   ..addFlag('warning',
       help:
           'Shows the warning message before potentially destructive operation.',
@@ -67,12 +67,10 @@ Future main(List<String> args) async {
   }
 
   final isJson = result['json'] as bool;
-  final showWarning = result['warning'] as bool;
-  final showScores = result['scores'] as bool;
 
   final source = result['source'];
-  final verbosity = Verbosity.values
-      .firstWhere((v) => v.toString().split('.').last == result['verbosity']);
+  // final verbosity = Verbosity.values
+  //     .firstWhere((v) => v.toString().split('.').last == result['verbosity']);
   String firstArg() {
     return result.rest.isEmpty ? null : result.rest.first;
   }
@@ -116,74 +114,46 @@ Future main(List<String> args) async {
     exit(130);
   });
 
-  var tempDir = Directory.systemTemp
-      .createTempSync('pana.${DateTime.now().millisecondsSinceEpoch}.');
-
-  // Critical to make sure analyzer paths align well
-  var tempPath = await tempDir.resolveSymbolicLinks();
-
+  final pubHostedUrl = result['hosted-url'] as String;
+  final toolEnvironment = await ToolEnvironment.create();
   try {
-    final pubHostedUrl = result['hosted-url'] as String;
-    final analyzer = await PackageAnalyzer.create(
-      pubCacheDir: tempPath,
-      flutterDir: result['flutter-sdk'] as String,
-    );
-    final options = InspectOptions(
-      verbosity: verbosity,
-      pubHostedUrl: pubHostedUrl,
-      lineLength: int.tryParse(result['line-length'] as String ?? ''),
-    );
-    try {
-      Summary summary;
-      if (source == 'hosted') {
-        final package = firstArg();
-        if (package == null) {
-          _printHelp(errorMessage: 'No package was provided.');
-        }
-        String version;
-        if (result.rest.length > 1) {
-          version = result.rest[1];
-        }
-        if (pubHostedUrl != defaultHostedUrl && version == null) {
-          _printHelp(
-              errorMessage:
-                  'Version must be specified when using --hosted-url option.');
-          return;
-        }
-        summary = await analyzer.inspectPackage(package,
-            version: version, options: options);
-      } else if (source == 'path') {
-        final path = firstArg() ?? '.';
-        final absolutePath = await Directory(path).resolveSymbolicLinks();
-        if (showWarning) {
-          log.Logger.root
-              .warning('pana might update or modify files in `$path`.\n'
-                  'Analysis will begin in 15 seconds, hit CTRL+C to abort it.\n'
-                  'To remove this message, use `--no-warning`.');
-          await Future.delayed(const Duration(seconds: 15));
-        }
-        summary = await analyzer.inspectDir(absolutePath, options: options);
+    Report report;
+    if (source == 'hosted') {
+      final package = firstArg();
+      if (package == null) {
+        _printHelp(errorMessage: 'No package was provided.');
       }
-      final map = summary.toJson();
-      if (showScores) {
-        map['scores'] = {
-          'health': _calculateScore(summary.health?.suggestions),
-          'maintenance': _calculateScore(summary.maintenance?.suggestions),
-        };
+      String version;
+      if (result.rest.length > 1) {
+        version = result.rest[1];
       }
-      print(prettyJson(map));
-    } catch (e, stack) {
-      final message = "Problem analyzing ${result.rest.join(' ')}";
-      final errorStr = e.toString();
-      final isInputError = errorStr.contains("Package doesn't exist");
-      final showStack = !isInputError;
-      log.Logger.root.shout(message, e, showStack ? stack : null);
-      exitCode = 1;
+      if (pubHostedUrl != defaultHostedUrl && version == null) {
+        _printHelp(
+            errorMessage:
+                'Version must be specified when using --hosted-url option.');
+        return;
+      }
+      await withTempDir((dir) async {
+        await downloadPackage(dir, package, version);
+        report = await createReport(dir, toolEnvironment);
+      });
+    } else if (source == 'path') {
+      final path = firstArg() ?? '.';
+      report = await createReport(Directory(path), toolEnvironment);
     }
-  } finally {
-    tempDir.deleteSync(recursive: true);
+    if (isJson) {
+      print(prettyJson(report.toJson()));
+    } else {
+      print(report.formatForTerminal);
+    }
+  } catch (e, stack) {
+    final message = "Problem analyzing ${result.rest.join(' ')}";
+    final errorStr = e.toString();
+    final isInputError = errorStr.contains("Package doesn't exist");
+    final showStack = !isInputError;
+    log.Logger.root.shout(message, e, showStack ? stack : null);
+    exitCode = 1;
   }
-
   await subscription.cancel();
 }
 
@@ -207,13 +177,4 @@ void _logWriter(log.LogRecord record) {
   overrideAnsiOutput(stderr.supportsAnsiEscapes, () {
     stderr.writeln(darkGray.wrap(msg));
   });
-}
-
-double _calculateScore(List<Suggestion> suggestions) {
-  if (suggestions == null || suggestions.isEmpty) {
-    return 100.0;
-  }
-  final score = max(0.0,
-      suggestions?.fold<double>(100.0, (d, s) => d - (s.score ?? 0)) ?? 0.0);
-  return (score * 100.0).round() / 100.0;
 }

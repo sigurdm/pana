@@ -4,11 +4,10 @@
 
 import 'dart:convert';
 
-import 'package:meta/meta.dart';
 import 'package:resource/resource.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
-import 'package_analyzer.dart' show InspectOptions;
+// import 'package_analyzer.dart' show InspectOptions;
 
 String _analysisOptions(String pedanticConfigPath) => '''
 # Defines a default set of lint rules enforced for
@@ -115,10 +114,8 @@ final _pedanticVersionRegExp =
 ///   in [inspectOptions].
 /// - Returns `pedantic/analysis_options.yaml` (if nothing is linked in it)
 /// - Returns the latest linked `pedantic/analysis_options.<version>.yaml`.
-Future<String> getPedanticContent({
-  @required InspectOptions inspectOptions,
-}) async {
-  final rootUri = inspectOptions?.analysisOptionsUri ??
+Future<String> getPedanticContent() async {
+  final rootUri = //inspectOptions?.analysisOptionsUri ??
       'package:pedantic/analysis_options.yaml';
   final rootContent = await Resource(rootUri).readAsString();
   final match = _pedanticVersionRegExp.firstMatch(rootContent);

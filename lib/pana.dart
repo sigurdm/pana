@@ -9,7 +9,7 @@ export 'src/health.dart';
 export 'src/license.dart';
 export 'src/maintenance.dart';
 export 'src/model.dart';
-export 'src/package_analyzer.dart';
+// export 'src/package_analyzer.dart';
 export 'src/pkg_resolution.dart';
 export 'src/platform.dart';
 export 'src/pubspec.dart';

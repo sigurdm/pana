@@ -7,7 +7,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:logging/logging.dart';
 import 'package:path/path.dart' as path;
 import 'package:pub_semver/pub_semver.dart';
 
@@ -17,7 +16,6 @@ import 'health.dart';
 import 'library_scanner.dart';
 import 'license.dart';
 import 'logging.dart';
-import 'maintenance.dart';
 import 'messages.dart' as messages;
 import 'model.dart';
 import 'pkg_resolution.dart';
@@ -72,45 +70,8 @@ class PackageAnalyzer {
         pubCacheDir: pubCacheDir));
   }
 
-  Future<Summary> inspectPackage(
-    String package, {
-    String version,
-    InspectOptions options,
-    Logger logger,
-  }) async {
-    options ??= InspectOptions();
-    return withLogger(() async {
-      log.info('Downloading package $package ${version ?? 'latest'}');
-      String packageDir;
-      Directory tempDir;
-      if (version != null) {
-        tempDir = await downloadPackage(package, version,
-            pubHostedUrl: options.pubHostedUrl);
-        packageDir = tempDir?.path;
-      }
-      if (packageDir == null) {
-        var pkgInfo = await _toolEnv.getLocation(package, version: version);
-        packageDir = pkgInfo.location;
-      }
-      try {
-        return await _inspect(packageDir, options);
-      } finally {
-        if (options.deleteTemporaryDirectory) {
-          await tempDir?.delete(recursive: true);
-        } else {
-          log.warning(
-              'Temporary directory was not deleted: `${tempDir.path}`.');
-        }
-      }
-    }, logger: logger);
-  }
-
-  Future<Summary> inspectDir(String packageDir, {InspectOptions options}) {
-    options ??= InspectOptions();
-    return _inspect(packageDir, options);
-  }
-
-  Future<Summary> _inspect(String pkgDir, InspectOptions options) async {
+  Future<Summary> inspect(Directory dir, {InspectOptions options}) async {
+    final packagePath = dir.path;
     final totalStopwatch = Stopwatch()..start();
     final resolveProcessStopwatch = Stopwatch();
     final analyzeProcessStopwatch = Stopwatch();
@@ -118,7 +79,7 @@ class PackageAnalyzer {
     final suggestions = <Suggestion>[];
 
     var dartFiles = await listFiles(
-      pkgDir,
+      packagePath,
       endsWith: '.dart',
       deleteBadExtracted: true,
     )
@@ -129,10 +90,10 @@ class PackageAnalyzer {
     log.info('Parsing pubspec.yaml...');
     Pubspec pubspec;
     try {
-      pubspec = Pubspec.parseFromDir(pkgDir);
+      pubspec = Pubspec.parseFromDir(packagePath);
     } catch (e, st) {
       log.info('Unable to read pubspec.yaml', e, st);
-      suggestions.add(pubspecParseError(e));
+      // suggestions.add(pubspecParseError(e));
       return Summary(
         runtimeInfo: _toolEnv.runtimeInfo,
         packageName: null,
@@ -166,7 +127,7 @@ class PackageAnalyzer {
     Set<String> unformattedFiles;
     try {
       unformattedFiles = SplayTreeSet<String>.from(
-          await _toolEnv.filesNeedingFormat(pkgDir, usesFlutter,
+          await _toolEnv.filesNeedingFormat(packagePath, usesFlutter,
               lineLength: options.lineLength));
 
       assert(unformattedFiles.every((f) => dartFiles.contains(f)),
@@ -188,14 +149,14 @@ class PackageAnalyzer {
     formatProcessStopwatch.stop();
 
     resolveProcessStopwatch.start();
-    final upgrade = await _toolEnv.runUpgrade(pkgDir, usesFlutter);
+    final upgrade = await _toolEnv.runUpgrade(packagePath, usesFlutter);
     resolveProcessStopwatch.stop();
 
     PkgResolution pkgResolution;
     if (upgrade.exitCode == 0) {
       try {
         pkgResolution = createPkgResolution(pubspec, upgrade.stdout as String,
-            path: pkgDir);
+            path: packagePath);
       } catch (e, stack) {
         log.severe('Problem with pub upgrade', e, stack);
         //(TODO)kevmoo - should add a helper that handles logging exceptions
@@ -254,7 +215,7 @@ class PackageAnalyzer {
       for (var i = 0; i <= options.dartdocRetry; i++) {
         try {
           final r = await _toolEnv.dartdoc(
-            pkgDir,
+            packagePath,
             options.dartdocOutputDir,
             validateLinks: i == 0,
             timeout: options.dartdocTimeout,
@@ -279,7 +240,8 @@ class PackageAnalyzer {
               'package:package_resolver/package_resolver.dart'),
         ];
 
-        libraryScanner = LibraryScanner(_toolEnv.dartSdkDir, package, pkgDir,
+        libraryScanner = LibraryScanner(
+            _toolEnv.dartSdkDir, package, packagePath,
             overrides: overrides);
         assert(libraryScanner.packageName == package);
       } catch (e, stack) {
@@ -317,7 +279,7 @@ class PackageAnalyzer {
       if (dartFiles.isNotEmpty) {
         analyzeProcessStopwatch.start();
         try {
-          analyzerItems = await _pkgAnalyze(pkgDir, usesFlutter, options);
+          analyzerItems = await _pkgAnalyze(packagePath, usesFlutter, options);
         } on ArgumentError catch (e) {
           if (e.toString().contains('No dart files found at: .')) {
             log.warning('`dartanalyzer` found no files to analyze.');
@@ -334,7 +296,7 @@ class PackageAnalyzer {
       }
 
       if (analyzerItems != null && !analyzerItems.any((item) => item.isError)) {
-        final tagger = Tagger(pkgDir);
+        final tagger = Tagger(packagePath);
         tagger.sdkTags(tags, suggestions);
         tagger.flutterPlatformTags(tags, suggestions);
         tagger.runtimeTags(tags, suggestions);
@@ -349,7 +311,7 @@ class PackageAnalyzer {
 
     final files = SplayTreeMap<String, DartFileSummary>();
     for (var dartFile in dartFiles) {
-      final size = fileSize(pkgDir, dartFile);
+      final size = fileSize(packagePath, dartFile);
       if (size == null) {
         log.warning('File deleted: $dartFile');
       }
@@ -419,14 +381,14 @@ class PackageAnalyzer {
           'Low code quality prevents platform classification.');
     }
 
-    var licenses = await detectLicensesInDir(pkgDir);
+    var licenses = await detectLicensesInDir(packagePath);
     licenses = await updateLicenseUrls(
         _urlChecker, pubspec.repository ?? pubspec.homepage, licenses);
 
     final maintenance = await detectMaintenance(
       options,
       _urlChecker,
-      pkgDir,
+      packagePath,
       pubspec,
       null, // unconstrainedDeps no longer used directly
       dartdocSuccessful: dartdocSuccessful,
@@ -459,24 +421,6 @@ class PackageAnalyzer {
       stats: stats,
       tags: tags,
     );
-  }
-
-  Future<List<CodeProblem>> _pkgAnalyze(
-      String pkgPath, bool usesFlutter, InspectOptions inspectOptions) async {
-    log.info('Analyzing package...');
-    final dirs = await listFocusDirs(pkgPath);
-    if (dirs.isEmpty) {
-      return null;
-    }
-    final output = await _toolEnv.runAnalyzer(pkgPath, dirs, usesFlutter,
-        inspectOptions: inspectOptions);
-    final list = LineSplitter.split(output)
-        .map((s) => parseCodeProblem(s, projectDir: pkgPath))
-        .where((e) => e != null)
-        .toSet()
-        .toList();
-    list.sort();
-    return list;
   }
 
   Set<String> _reachableLibs(Map<String, List<String>> allTransitiveLibs) {

@@ -1,5 +1,7 @@
 import 'dart:collection';
+import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 import 'package:pubspec_parse/pubspec_parse.dart' as pubspek show Pubspec;
 import 'package:pubspec_parse/pubspec_parse.dart' hide Pubspec;
@@ -18,15 +20,18 @@ class Pubspec {
         _content = content;
 
   factory Pubspec.parseFromDir(String packageDir) {
-    var content = getPubspecContent(packageDir);
-    if (content == null) {
+    final path = p.join(packageDir, 'pubspec.yaml');
+    final file = File(path);
+    if (file.existsSync()) {
+      return Pubspec.parseYaml(file.readAsStringSync(), sourceUrl: path);
+    } else {
       throw Exception("Couldn't find a pubspec.yaml in $packageDir.");
     }
-    return Pubspec.parseYaml(content);
   }
 
-  factory Pubspec.parseYaml(String content) =>
-      Pubspec(Map<String, dynamic>.from(yaml.loadYaml(content) as Map));
+  factory Pubspec.parseYaml(String content, {dynamic sourceUrl}) =>
+      Pubspec(Map<String, dynamic>.from(
+          yaml.loadYaml(content, sourceUrl: sourceUrl) as Map));
 
   factory Pubspec.fromJson(Map<String, dynamic> json) => Pubspec(json);
 
@@ -102,7 +107,15 @@ class Pubspec {
 
   bool get hasDartSdkConstraint => sdkConstraintStatus.hasConstraint;
 
-  bool get shouldWarnDart2Constraint => !sdkConstraintStatus.enablesDart2Latest;
+  /// 'true' if any dart2 versions of the sdk are supported.
+  bool get supportsDart2 {
+    final environment = _inner.environment;
+    final sdkConstraint =
+        environment['sdk'] ?? VersionConstraint.parse('<2.0.0');
+    return !sdkConstraint
+        .intersect(VersionConstraint.parse('>=2.0.0 <3.0.0'))
+        .isEmpty;
+  }
 
   bool get hasGitDependency =>
       _inner.dependencies.values.any((d) => d is GitDependency);
