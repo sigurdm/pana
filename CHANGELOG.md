@@ -1,3 +1,7 @@
+## 0.23.17-wip
+
+- Validate repository URL reachability before creating local git repository.
+
 ## 0.23.16
 
 - Protect against YAML alias expansion bombs (Billion Laughs), cyclic references, and extreme nesting depth in `yamlToJson`.
