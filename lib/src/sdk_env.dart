@@ -398,6 +398,7 @@ class ToolEnvironment {
     required String command,
     bool verbose = false,
     bool throwOnError = false,
+    bool stripAllDevDependencies = false,
   }) async {
     return await _withStripAndAugmentPubspecYaml(packageDir, () async {
       return await _sandboxRunner.runSandboxed(
@@ -413,7 +414,7 @@ class ToolEnvironment {
         writableCurrentDir: true,
         throwOnError: throwOnError,
       );
-    });
+    }, stripAllDevDependencies: stripAllDevDependencies);
   }
 
   Future<Outdated> runPubOutdated(
