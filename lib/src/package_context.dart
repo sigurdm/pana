@@ -191,20 +191,11 @@ class PackageContext {
     try {
       log.info('Analyzing pub downgrade...');
       final tool = usesFlutter ? 'flutter' : 'dart';
-      var pr = await toolEnvironment.runPub(
+      final pr = await toolEnvironment.runPub(
         packageDir,
         usesFlutter: usesFlutter,
         command: 'downgrade',
       );
-      // try to downgrade without the dev-dependencies
-      if (pr.wasError) {
-        pr = await toolEnvironment.runPub(
-          packageDir,
-          usesFlutter: usesFlutter,
-          command: 'downgrade',
-          stripAllDevDependencies: true,
-        );
-      }
       if (pr.wasError) {
         log.info('[pub-downgrade-error]');
         log.info(pr.asJoinedOutput);
@@ -214,7 +205,6 @@ class PackageContext {
           usesFlutter: usesFlutter,
           command: 'downgrade',
           verbose: true,
-          stripAllDevDependencies: true,
         );
         log.info(rerun.asJoinedOutput);
         return '`$tool pub downgrade` failed with:\n\n```\n${pr.asTrimmedOutput}\n```\n';
